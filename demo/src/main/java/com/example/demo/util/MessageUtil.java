@@ -3,11 +3,15 @@ package com.example.demo.util;
 import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONArray;
 import com.alibaba.fastjson.JSONObject;
+import org.apache.http.NameValuePair;
 import org.apache.http.client.config.RequestConfig;
+import org.apache.http.client.entity.UrlEncodedFormEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
 import org.apache.http.client.methods.HttpGet;
+import org.apache.http.client.methods.HttpPost;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
+import org.apache.http.message.BasicNameValuePair;
 import org.apache.http.util.EntityUtils;
 import org.dom4j.Document;
 import org.dom4j.Element;
@@ -17,15 +21,16 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import javax.servlet.http.HttpServletRequest;
 import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Component
 public class MessageUtil {
@@ -33,6 +38,8 @@ public class MessageUtil {
     private static StringRedisTemplate stringRedisTemplate;//字符串存储
     private static RedisTemplate redisTemplate;//对象存储
     private static String ak;
+    private static String youDaoAppid;
+    private static String youDaoSecret;
 
     @Autowired
     public MessageUtil(StringRedisTemplate stringRedisTemplate, RedisTemplate redisTemplate){
@@ -97,6 +104,9 @@ public class MessageUtil {
             }else if(content.trim().startsWith("天气:")){
                 String city = content.trim().replace("天气:", "");
                 result = buildWeatherMessage(map, city);
+            }else if(content.trim().startsWith("翻译:")){
+                String code = content.trim().replace("翻译:", "");
+                result = buildTranslateMessage(map, code);
             }else{
                 result = buildTextMessage(map, "Cherry的小小窝, 请问客官想要点啥?");
             }
@@ -375,6 +385,112 @@ public class MessageUtil {
                 fromUserName, toUserName, getUtcTime(), sb.toString());
     }
 
+    //回复翻译信息
+    private static String buildTranslateMessage(Map<String, String> map, String q) {
+        //发送方帐号
+        String fromUserName = map.get("FromUserName");
+        // 开发者微信号
+        String toUserName = map.get("ToUserName");
+        StringBuilder sb = new StringBuilder();
+        CloseableHttpClient httpclient = HttpClients.createDefault();
+        RequestConfig requestConfig = RequestConfig.custom().setConnectTimeout(50000).setConnectionRequestTimeout(10000).setSocketTimeout(50000).build();
+        // 创建HttpGet请求，相当于在浏览器输入地址
+        HttpPost httpPost = new HttpPost("http://openapi.youdao.com/api");
+        httpPost.setConfig(requestConfig);
+        List<NameValuePair> kvList = new ArrayList<>();
+        kvList.add(new BasicNameValuePair("q", q));
+        kvList.add(new BasicNameValuePair("from", "auto"));
+        kvList.add(new BasicNameValuePair("to", "auto"));
+        kvList.add(new BasicNameValuePair("appKey", youDaoAppid));
+        kvList.add(new BasicNameValuePair("signType", "v3"));
+        String curtime = String.valueOf(System.currentTimeMillis() / 1000);
+        kvList.add(new BasicNameValuePair("curtime", curtime));
+        //随机数
+        String salt = String.valueOf(System.currentTimeMillis());
+        kvList.add(new BasicNameValuePair("salt", salt));
+        //签名，通过md5(appkey+q+salt+密钥)生成
+        String sign = getDigest(youDaoAppid + q + salt + curtime + youDaoSecret);
+        kvList.add(new BasicNameValuePair("sign", sign));
+        CloseableHttpResponse response = null;
+        try {
+            httpPost.setEntity(new UrlEncodedFormEntity(kvList,"UTF-8"));
+            // 执行请求，相当于敲完地址后按下回车。获取响应
+            response = httpclient.execute(httpPost);
+            // 判断返回状态是否为200
+            if (response.getStatusLine().getStatusCode() == 200) {
+                // 解析响应，获取数据
+                String content = EntityUtils.toString(response.getEntity(), "UTF-8");
+                JSONObject object = JSON.parseObject(content);
+                String status = object.getString("errorCode");
+                if("0".equals(status)){
+                    if(StringUtils.isEmpty(object.getString("query"))){
+                        sb.append("原文:"+object.getString("query") + "\n");
+                    }
+                    if(StringUtils.isEmpty(object.getString("translation"))){
+                        sb.append("翻译结果：");
+                        JSONArray array = object.getJSONArray("translation");
+                        for(int i=0;i<array.size();i++){
+                            sb.append(array.getString(i)).append("\n");
+                        }
+                    }
+                }
+            }
+        } catch (Exception e){
+            e.printStackTrace();
+        } finally {
+            try {
+                if (response != null) {
+                    // 关闭资源
+                    response.close();
+                }
+                // 关闭浏览器
+                httpclient.close();
+            } catch (Exception e){
+                e.printStackTrace();
+            }
+        }
+        /**
+         * 文本消息XML数据格式
+         */
+        if(sb.length()==0){
+            sb.append("查询结果为空。");
+        }
+        return String.format(
+                "<xml>" +
+                        "<ToUserName><![CDATA[%s]]></ToUserName>" +
+                        "<FromUserName><![CDATA[%s]]></FromUserName>" +
+                        "<CreateTime>%s</CreateTime>" +
+                        "<MsgType><![CDATA[text]]></MsgType>" +
+                        "<Content><![CDATA[%s]]></Content>" + "</xml>",
+                fromUserName, toUserName, getUtcTime(), sb.toString());
+    }
+
+    /**
+     * 生成加密字段
+     */
+    public static String getDigest(String string) {
+        if (string == null) {
+            return null;
+        }
+        char hexDigits[] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F'};
+        byte[] btInput = string.getBytes();
+        try {
+            MessageDigest mdInst = MessageDigest.getInstance("SHA-256");
+            mdInst.update(btInput);
+            byte[] md = mdInst.digest();
+            int j = md.length;
+            char str[] = new char[j * 2];
+            int k = 0;
+            for (byte byte0 : md) {
+                str[k++] = hexDigits[byte0 >>> 4 & 0xf];
+                str[k++] = hexDigits[byte0 & 0xf];
+            }
+            return new String(str);
+        } catch (NoSuchAlgorithmException e) {
+            return null;
+        }
+    }
+
     private static String getUtcTime() {
         Date dt = new Date();// 如果不需要格式,可直接用dt,dt就是当前系统时间
         DateFormat df = new SimpleDateFormat("yyyyMMddhhmm");// 设置显示格式
@@ -391,6 +507,16 @@ public class MessageUtil {
     @Value("${baidu.weather.ak}")
     public void setAk(String ak){
         MessageUtil.ak = ak;
+    }
+
+    @Value("${youdao.translate.appid}")
+    public static void setYouDaoAppid(String youDaoAppid) {
+        MessageUtil.youDaoAppid = youDaoAppid;
+    }
+
+    @Value("${youdao.translate.secret}")
+    public static void setYouDaoSecret(String youDaoSecret) {
+        MessageUtil.youDaoSecret = youDaoSecret;
     }
 
 }
