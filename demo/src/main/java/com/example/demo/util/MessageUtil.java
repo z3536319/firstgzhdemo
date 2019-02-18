@@ -97,7 +97,11 @@ public class MessageUtil {
         Map<String,List<String>> materialMap = (Map<String,List<String>>) redisTemplate.opsForValue().get("materialMap");
         if(msgType.toUpperCase().equals("TEXT")){
             String content = map.get("Content").toString().trim();
-            if("音乐".equals(content)){
+            EmojiUtil emojiUtil = new EmojiUtil();
+            String unicodeEmoji = emojiUtil.filterEmoji(content); //unicode编码的Emoji
+            if(content.contains("/:")  || content.contains("\\:")  || content.contains("[") && content.contains("]") || unicodeEmoji.contains("\\")){
+                result = buildTextMessage(map,"客官发送的内容很特别哟~/:heart    " + content);
+            }else if("音乐".equals(content)){
                 result = buildMusicMessage(map);
             }else if("图文".equals(content)){
                 result = buildNewsMessage(map);
@@ -420,13 +424,14 @@ public class MessageUtil {
             if (response.getStatusLine().getStatusCode() == 200) {
                 // 解析响应，获取数据
                 String content = EntityUtils.toString(response.getEntity(), "UTF-8");
+                System.out.println(content);
                 JSONObject object = JSON.parseObject(content);
                 String status = object.getString("errorCode");
                 if("0".equals(status)){
-                    if(StringUtils.isEmpty(object.getString("query"))){
+                    if(!StringUtils.isEmpty(object.getString("query"))){
                         sb.append("原文:"+object.getString("query") + "\n");
                     }
-                    if(StringUtils.isEmpty(object.getString("translation"))){
+                    if(!StringUtils.isEmpty(object.getString("translation"))){
                         sb.append("翻译结果：");
                         JSONArray array = object.getJSONArray("translation");
                         for(int i=0;i<array.size();i++){
@@ -510,12 +515,12 @@ public class MessageUtil {
     }
 
     @Value("${youdao.translate.appid}")
-    public static void setYouDaoAppid(String youDaoAppid) {
+    public void setYouDaoAppid(String youDaoAppid) {
         MessageUtil.youDaoAppid = youDaoAppid;
     }
 
     @Value("${youdao.translate.secret}")
-    public static void setYouDaoSecret(String youDaoSecret) {
+    public void setYouDaoSecret(String youDaoSecret) {
         MessageUtil.youDaoSecret = youDaoSecret;
     }
 

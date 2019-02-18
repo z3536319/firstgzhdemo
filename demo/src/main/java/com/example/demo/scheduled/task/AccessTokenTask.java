@@ -64,18 +64,17 @@ public class AccessTokenTask {
                 Thread.sleep(5000);
             } catch (Exception e){
                 e.printStackTrace();
-            } finally {
-                try {
-                    if (response != null) {
-                        // 关闭资源
-                        response.close();
-                    }
-                    // 关闭浏览器
-                    httpclient.close();
-                } catch (Exception e){
-                    e.printStackTrace();
-                }
             }
+        }
+        try {
+            if (response != null) {
+                // 关闭资源
+                response.close();
+            }
+            // 关闭浏览器
+            httpclient.close();
+        } catch (Exception e){
+            e.printStackTrace();
         }
     }
 }
